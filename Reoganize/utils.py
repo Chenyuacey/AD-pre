@@ -155,8 +155,35 @@ def Trainset_norm(Image_path, Label_path, Trainset_root):
         f.writelines(str(i).zfill(5)+'\n')
     f.close()
 
-def Testset_norm():
-    pass
+def Testset_norm(Image_path, Testset_root,Linux_root,stride=1):
+    if not os.path.exists(Testset_root):
+        os.mkdir(Testset_root)
+    Testset_image_root = os.path.join(Testset_root, 'image')
+    # Mkdir as set1\image, set1\label
+    if not os.path.exists(Testset_image_root):
+        os.mkdir(Testset_image_root)
+    # Generate data path and copy file.
+    imagepath_list = os.listdir(Image_path)
+    f = open(os.path.join(Testset_root, 'test.txt'),'w+')
+    f2 = open(os.path.join(Testset_root, 'imagepath.txt'),'w+')
+    f3 = open(os.path.join(Testset_root,'index.txt'),'w+')
+    for i in range(0,len(imagepath_list),stride):
+        print(imagepath_list[i])
+        # Copy image file to training_set save path set1\image.
+        imagepathi = os.path.join(Image_path, imagepath_list[i])
+        save_image_dir,save_image_name = str(i).zfill(5), str(i).zfill(5) + '.tif'
+        save_imagediri = os.path.join(Testset_image_root, save_image_dir)
+        save_imagepathi = os.path.join(save_imagediri, save_image_name)
+        if not os.path.exists(save_imagediri):
+            os.mkdir(save_imagediri)
+        shutil.copyfile(imagepathi, save_imagepathi)
+        print(imagepathi, '--->', save_imagepathi, '\n')
+        # Write "train.txt"
+        f.writelines(str(i).zfill(5)+'\n')
+        f2.writelines(Linux_root + '/' + str(i).zfill(5) + '/' + str(i).zfill(5) + '.tif\n')
+        f3.writelines(str(i).zfill(5) + ' ' + imagepath_list[i] + '\n')
+    f.close()
+    f2.close()
 
 def Write_labelpath(Testset_root,Linux_root, test_num):
     """Write Imagepath.txt with Linux path root.
@@ -467,6 +494,8 @@ def Illumination_correction(image_root,save_root, issue=False):
                 else:
                     image[i, :, :] = (slice / (Intensity_slice[i] / middle_intensity))
         tifffile.imwrite(save_path,image.astype(('uint16')),compress=2)
+        with open('illumination.txt','a+') as f:
+            f.writelines(str(Intensity_slice)+'\n')
 
 def BrainImage_reshape(BrainImage_root,Save_reshape_root,scale):
     from skimage.transform import resize
@@ -485,8 +514,75 @@ def BrainImage_reshape(BrainImage_root,Save_reshape_root,scale):
         print(resized_data.shape)
         tifffile.imwrite(Save_reshape_path,resized_data.astype(('uint16')),compress=2)
 
+def Illumination_select(Illu_path,image_root,Save_root,thres):
+    """
+    Select image for network training and testing by 3D mean Intensity.
+    If <= threshold, the image is background.
+    """
+    if not os.path.exists(Save_root):
+        os.mkdir(Save_root)
+    image_list = os.listdir(image_root)
+    with open(Illu_path,'r') as f:
+        txt_lines = f.readlines()
+    for i in range(len(txt_lines)):
+        image_name = image_list[i]
+        line = txt_lines[i]
+        inten_list = list(map(float,line[1:-2].split(', ')))
+        inten_3D = np.mean(inten_list)
+        print(inten_3D)
+        image_txt = os.path.join(Save_root,'image_path.txt')
+        if inten_3D > thres:
+            print(i, image_name)
+            image_path = os.path.join(image_root,image_name)
+            save_path = os.path.join(Save_root,image_name)
+            shutil.copyfile(image_path,save_path)
+            with open(image_txt,'a+') as f:
+                f.writelines(image_name+'\t'+str(inten_3D)+'\n')
 
+def Montage(Index_path,Binary_root,Save_root):
+    """
+    For 3M.
+    Montage image from binary dir with index.txt generated during norm testset stage.
+    Need to rewrite.
+    :param Index_path:
+    :param Binary_root:
+    :param Save_root:
+    :return:
+    """
+    if not os.path.exists(Save_root):
+        os.mkdir(Save_root)
+    with open(Index_path,'r') as f:
+        lines = f.readlines()
+
+    image_index_mat = np.full((85,11*16),-1)
+
+    for line in lines:
+        line = line.strip().split(' ')
+        binary_image_index,image_realname = line[0],line[1]
+        name_split = image_realname.split('.')[0].split('_')
+        realimage_index, realimage_split_num = int(name_split[3]),int(name_split[7])
+        image_index_mat[realimage_index, realimage_split_num] = binary_image_index
+    c = np.argwhere(image_index_mat[:] != -1)
+    image_list = np.unique(c[:, 0])
+    for i in range(len(image_list)):
+        Save_path = os.path.join(Save_root, str(image_list[i]).zfill(5)+'.tif')
+        print(image_list[i])
+        image = np.zeros((128,256*11,256*16)).astype('uint16')
+        insert_pos = np.argwhere(image_index_mat[image_list[i]]!=-1)
+        for j in range(len(insert_pos)):
+            #print(image_list[i], insert_pos[j])
+            Block_name = str(int(image_index_mat[image_list[i], insert_pos[j]])).zfill(5)+'.tif'
+            Block_path = os.path.join(Binary_root, Block_name)
+            print(Block_path)
+            block_image = np.ones((128,256,256)).astype('uint16')
+            # block_image = tifffile.imread(Block_path)
+            block_num = int(insert_pos[j])
+            row,column= math.floor(block_num/16),block_num % 16
+            print(block_num,row,column)
+            image[:, row*256:row*256+256 ,column*256:column*256+256] = block_image
+        # tifffile.imwrite(Save_path,image,compress = 2)
 if __name__ == '__main__':
+
     # Mask_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Segmentation_GT'
     # Bbox_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Bbox_GT'
     # Display_im_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Raw_data'
@@ -502,6 +598,12 @@ if __name__ == '__main__':
     # Image_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Raw_data_ic'
     # Trainset_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\914_trainset\set4'
     # Trainset_norm(Image_path, Label_path,Trainset_root)
+
+    # Test_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\918_Trainset_gen\Illumi_select_v1_130\brainslice_select'
+    # Save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\918_Trainset_gen\918_Testset_whole'
+    # Linux_root = r'/home/zhiyi/Data/AD_BrainImage/919_test/set2/image'
+    # stride = 1
+    # Testset_norm(Test_root, Save_root, Linux_root, stride)
 
     # Testset_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\914_trainset\set1'
     # Linux_root = r'/home/zhiyi/Data/AD_BrainImage/914_014/set2/image'
@@ -548,12 +650,24 @@ if __name__ == '__main__':
     # Display_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\915_down\915_filter\915_014_filter\model_step2999_bbox'
     # draw_bbox_from_PRM(Label_root, Image_root,Display_save_root)
 
-    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Raw_data'
-    # save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Raw_data_ic'
+    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\Split_Reshape_BrainImage_stack_916'
+    # save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\IC_Split_Reshape_BrainImage_stack_916'
     # Illumination_correction(Image_root,save_root,issue=False)
 
-    BarinImage_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_stack_916'
-    Save_reshape_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\Reshape_BrainImage_stack_916'
-    scale = 128 / 75
-    # scale = 75/128
-    BrainImage_reshape(BarinImage_path,Save_reshape_path,scale)
+    # BarinImage_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_stack_916'
+    # Save_reshape_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\Reshape_BrainImage_stack_916'
+    # scale = 128 / 75
+    # # scale = 75/128
+    # BrainImage_reshape(BarinImage_path,Save_reshape_path,scale)
+
+    # Illu_path = r'D:\UserData\zhiyi\Project\AD-Pre-python\Reoganize\illumination.txt'
+    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\IC_Split_Reshape_BrainImage_stack_916'
+    # Save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\918_Trainset_gen\Illumi_select_3'
+    # thres = 130
+    # Illumination_select(Illu_path,Image_root, Save_root,thres)
+
+    Index_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\918_Trainset_gen\918_Testset_whole\index.txt'
+    Binary_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\919_test'
+    Save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\919_test_montage'
+    Montage(Index_path,Binary_root,Save_root)
+    pass
