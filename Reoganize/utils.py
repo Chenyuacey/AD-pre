@@ -1,4 +1,5 @@
 from skimage import  io,measure
+import skimage
 import cv2
 import  os
 import numpy as np
@@ -7,6 +8,20 @@ import tifffile
 import h5py
 import shutil
 import math
+import time
+def Gaussian_filter_3D(Imagepth,savepath):
+    time1 = time.time()
+    from skimage.filters import gaussian
+    image = tifffile.imread(Imagepth).astype('uint16')
+    time2 = time.time()
+    filter_image = (gaussian(image,2)*65536).astype('uint16')
+    time3 = time.time()
+    tifffile.imwrite(savepath,filter_image,compress=2)
+    time4 = time.time()
+    print('---finished---')
+    print('read:',time2-time1,'\tblur:',time3-time2,'\twrite',time4-time3)
+
+
 def mask2bbox(Mask_root, Bbox_save_root, Display_im_root, Display_save_root, area_threshold = 64):
     """Generate bounding box from ilastik rough masks.
     Parameters
@@ -197,39 +212,45 @@ def Write_labelpath(Testset_root,Linux_root, test_num):
         f.writelines(Linux_root + '/' + str(i).zfill(5) + '/' + str(i).zfill(5)+'.tif\n')
     f.close()
 
-def Signal_Threshold(image_path,bbox_path,threshold = 40):
-    with open(bbox_path, 'r') as f:
-        bbox = f.readlines()
-    print(image_path)
-    image = io.imread(image_path).astype('uint16')
-    bbox_num = 0
-    filter_num = 0
-    for item in bbox[1:]:
-        bbox_num += 1
-        x, y, z , r_xy, r_z = int(item.split(' ')[0]), int(item.split(' ')[1]), int(item.split(' ')[2]), \
-                int(item.split(' ')[3]), int(item.split(' ')[4])
-        x1, x2, y1, y2, z1, z2 = np.maximum(x - r_xy, 0), np.minimum(x + r_xy, 255), np.maximum(y - r_xy, 0), \
-                                 np.minimum(y + r_xy, 255), np.maximum(z - r_z, 0), np.minimum(z + r_z, 74)
-        image_bbox = image[z1:z2, y1:y2, x1:x2]
-        mean_bbox, max_bbox, min_bbox, = np.mean(image_bbox),np.max(image_bbox), np.min(image_bbox)
-        hist_bbox, binedge_bbox = np.histogram(image_bbox)
-        #print(hist_bbox, binedge_bbox)
-        if max_bbox - min_bbox < threshold:
-            filter_num += 1
-            print(bbox_num, mean_bbox, max_bbox, min_bbox)
-    return filter_num
 
-def Bouding_box_statics(Image_root,Label_root,threshold):
+def Bouding_box_statics(Image_root,Label_root,thres_save_root,threshold):
     """ Just for bounding box statics test , bounding box  from .txt file.
     :return:
     """
     num = 0
+    count = np.zeros((10000,1))
     Image_list,Label_list = os.listdir(Image_root),os.listdir(Label_root)
-    for i in range(len(Image_list)):
-        Imagepath, Labelpath = os.path.join(Image_root, Image_list[i]),os.path.join(Label_root,Label_list[i])
-        filter_num = Signal_Threshold(Imagepath, Labelpath, threshold)
-        num += filter_num
-    print(num)
+    for i in range(len(Label_list)):
+        image_path, bbox_path = os.path.join(Image_root, Image_list[i]),os.path.join(Label_root,Label_list[i])
+        thres_save_path = os.path.join(thres_save_root,Label_list[i])
+        with open(bbox_path, 'r') as f:
+            bbox = f.readlines()
+        print(image_path)
+        image = io.imread(image_path).astype('uint16')
+        bbox_num = 0
+        filter_num = 0
+        f = open(thres_save_path, 'w+')
+        for item in bbox[1:]:
+            bbox_num += 1
+            x, y, z, r_xy, r_z = int(item.split(' ')[0]), int(item.split(' ')[1]), int(item.split(' ')[2]), \
+                                 int(item.split(' ')[3]), int(item.split(' ')[4])
+            x1, x2, y1, y2, z1, z2 = np.maximum(x - r_xy, 0), np.minimum(x + r_xy, 255), np.maximum(y - r_xy, 0), \
+                                     np.minimum(y + r_xy, 255), np.maximum(z - r_z, 0), np.minimum(z + r_z, 127)
+            image_bbox = image[z1:z2, y1:y2, x1:x2]
+            mean_bbox, max_bbox, min_bbox, = np.mean(image_bbox), np.max(image_bbox), np.min(image_bbox)
+            bbox_thres = max_bbox - min_bbox
+            count[bbox_thres] += 1
+            print(bbox_thres)
+            f.writelines(str(x)+' '+str(y)+' '+str(z)+' '+str(r_xy)+' '+ str(r_z)+' '+str(bbox_thres) + '\n')
+        f.close()
+    thres = ''
+    # for i in range(len(count)):
+
+    for i in range(threshold):
+        if count[i] != 0:
+            thres = thres + str(i) + ':' + str(count[i]) + ' '
+    print('Intensity(thres:count):', thres, '\n')
+
 
 def Bbox_exp(Label_root,offset = 2):
     """For Bounding box expansion to include much more background pixels.
@@ -271,16 +292,16 @@ def Bbox_exp(Label_root,offset = 2):
 def draw_bbox_from_label(Label_root, Display_im_root, Display_save_root):
     if not os.path.exists(Display_save_root):
         os.mkdir(Display_save_root)
-    Display_im_list = os.listdir(Display_im_root)
+    #Display_im_list = os.listdir(Display_im_root)
     Label_list = os.listdir(Label_root)
     for i in range(len(Label_list)):
         id = 0
         Label_path = os.path.join(Label_root, Label_list[i])
-        Display_im_path = os.path.join(Display_im_root, Display_im_list[i])
+        Display_im_path = os.path.join(Display_im_root, Label_list[i].split('.')[0]+'.tif')
         image = io.imread(Display_im_path).astype('uint16')
         new_image = image
-        Display_save_path = os.path.join(Display_save_root, Display_im_list[i])
-        print(Label_path,Display_save_path)
+        Display_save_path = os.path.join(Display_save_root, Label_list[i].split('.')[0]+'.tif')
+        print(Label_path,Display_im_path)
         with open(Label_path,'r') as f:
             bbox = f.readlines()
         for item in bbox[1:]:
@@ -364,13 +385,13 @@ def draw_bbox_from_PRM(Root_label_path, Root_path, Display_save_root):
                 # cv2.waitKey()
             io.imsave(save_path,(new_image))
             io.imsave(display_save_root,new_image)
-
 def Radius_statics(Label_root):
     """Count the label's radius. 1)Noisy labels can be filtered by irrational size.
     2)Select the RPN size by count result.
     """
-    Hash_xy,Hash_z = np.zeros((50,1)),np.zeros((50,1))
+    Hash_xy,Hash_z = np.zeros((100,1)),np.zeros((100,1))
     Label_list = os.listdir(Label_root)
+    count = 0
     for i in range(len(Label_list)):
         #print(Label_list[i])
         Label_path = os.path.join(Label_root,Label_list[i])
@@ -380,13 +401,14 @@ def Radius_statics(Label_root):
             r_xy, r_z = int(item.split(' ')[3]), int(item.split(' ')[4])
             Hash_xy[r_xy] += 1
             Hash_z[r_z] += 1
+            count += 1
     xy = z = ''
     for i in range(len(Hash_xy)):
         if Hash_xy[i] != 0:
             xy = xy + str(i) + ':' +str(Hash_xy[i]) +' '
         if Hash_z[i] != 0:
             z = z + str(i) + ':' +str(Hash_z[i]) + ' '
-    print('r_xy(len:count):',xy,'\n','r_z(size:count)',z)
+    print('r_xy(len:count):',xy,'\n','r_z(size:count)',z, '\nBBOX_NUM:',count)
 
 def Label_select(Label_root,Image_root,Save_root,size_thre=None,Signal_thre=None):
     if not os.path.exists(Save_root):
@@ -498,7 +520,6 @@ def Illumination_correction(image_root,save_root, issue=False):
             f.writelines(str(Intensity_slice)+'\n')
 
 def BrainImage_reshape(BrainImage_root,Save_reshape_root,scale):
-    from skimage.transform import resize
     from scipy.ndimage import zoom
     if not os.path.exists(Save_reshape_root):
         os.mkdir(Save_reshape_root)
@@ -539,7 +560,7 @@ def Illumination_select(Illu_path,image_root,Save_root,thres):
             with open(image_txt,'a+') as f:
                 f.writelines(image_name+'\t'+str(inten_3D)+'\n')
 
-def Montage(Index_path,Binary_root,Save_root):
+def Montage(Index_path,Binary_root,Save_root,MODE='3M'):
     """
     For 3M.
     Montage image from binary dir with index.txt generated during norm testset stage.
@@ -553,50 +574,85 @@ def Montage(Index_path,Binary_root,Save_root):
         os.mkdir(Save_root)
     with open(Index_path,'r') as f:
         lines = f.readlines()
+    if MODE == '3M':
+        # row = 11, column = 16, [2816, 4096]
+        c = 16
+        r = 11
+        image_num = 85
+        block_size = 256
+        z_len = 128
 
-    image_index_mat = np.full((85,11*16),-1)
-
+    image_index_mat = np.full((image_num,c*r),-1)
+    print(c,r,image_num)
     for line in lines:
         line = line.strip().split(' ')
         binary_image_index,image_realname = line[0],line[1]
         name_split = image_realname.split('.')[0].split('_')
         realimage_index, realimage_split_num = int(name_split[3]),int(name_split[7])
         image_index_mat[realimage_index, realimage_split_num] = binary_image_index
-    c = np.argwhere(image_index_mat[:] != -1)
-    image_list = np.unique(c[:, 0])
+
+    c_index = np.argwhere(image_index_mat[:] != -1)
+    image_list = np.unique(c_index[:, 0])
+
     for i in range(len(image_list)):
         Save_path = os.path.join(Save_root, str(image_list[i]).zfill(5)+'.tif')
         print(image_list[i])
-        image = np.zeros((128,256*11,256*16)).astype('uint16')
+        image = np.zeros((z_len,block_size*r,block_size*c)).astype('uint16')
         insert_pos = np.argwhere(image_index_mat[image_list[i]]!=-1)
         for j in range(len(insert_pos)):
             #print(image_list[i], insert_pos[j])
             Block_name = str(int(image_index_mat[image_list[i], insert_pos[j]])).zfill(5)+'.tif'
             Block_path = os.path.join(Binary_root, Block_name)
             print(Block_path)
-            block_image = np.ones((128,256,256)).astype('uint16')
-            # block_image = tifffile.imread(Block_path)
+            # block_image = np.ones((128,256,256)).astype('uint16')
+            block_image = tifffile.imread(Block_path)
             block_num = int(insert_pos[j])
-            row,column= math.floor(block_num/16),block_num % 16
+            row,column= math.floor(block_num/c), block_num % c
             print(block_num,row,column)
-            image[:, row*256:row*256+256 ,column*256:column*256+256] = block_image
-        # tifffile.imwrite(Save_path,image,compress = 2)
-if __name__ == '__main__':
+            image[:, row*block_size:row*block_size+block_size ,column*block_size\
+                    :column*block_size+block_size] = block_image
+        tifffile.imwrite(Save_path,image,compress = 2)
 
-    # Mask_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Segmentation_GT'
-    # Bbox_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Bbox_GT'
-    # Display_im_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Raw_data'
-    # Display_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Display_data'
+def crop_BrainImage(Image_root,Save_root):
+    image_list = os.listdir(Image_root)
+    for i in range(len(image_list)):
+        image_path = os.path.join(Image_root,image_list[i])
+        save_path = os.path.join(Save_root,image_list[i])
+        if os.path.exists(save_path):
+            continue
+        image = tifffile.imread(image_path)
+        crop_image = image[:, 729:729+2816,1059:1059+4096]
+        print(crop_image.shape)
+        tifffile.imwrite(save_path,crop_image,compress=2)
+
+def select_bbox_image(Image_root,Label_root,Save_label_root):
+    image_list = os.listdir(Image_root)
+    for i in range(len(image_list)):
+        imagepath = os.path.join(Image_root,image_list[i])
+        labelname = image_list[i].split('.')[0]+'.txt'
+        labelpath = os.path.join(Label_root,labelname)
+        savelabelpath = os.path.join(Save_label_root,labelname)
+        shutil.copyfile(labelpath, savelabelpath)
+
+if __name__ == '__main__':
+    # imagepath = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A0_488\AD_3M_5_020_488nm_10X.tif'
+    # savepath = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A0_488\G_AD_3M_5_020_488nm_10X.tif'
+    # Gaussian_filter_3D(imagepath,savepath)
+
+    # Mask_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\A1_segmentation_GT'
+    # Bbox_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\B0_Bbox_GT'
+    # Display_im_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\A0_Raw_data'
+    # Display_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\B1_Display_data'
     # area_threshold = 64
     # mask2bbox(Mask_root, Bbox_save_root, Display_im_root, Display_save_root, area_threshold)
 
-    # Path_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\910_train_test_014\BrainImage\Reshape_BrainImage_H5'
-    # Path_Save_Root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\910_train_test_014\BrainImage\Reshape_BrainImage_GT'
+    # Path_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\F_Ilastik\B_h5'
+    # Path_Save_Root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\F_Ilastik\C_seg_tiff'
     # H52tif(Path_root,Path_Save_Root)
 
-    # Label_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\BBOX_HAND'
-    # Image_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Raw_data_ic'
-    # Trainset_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\914_trainset\set4'
+    # Label_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A0_914_train_test_014\A2_train_set_gen\B0_Bbox_GT'
+    # Image_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A0_914_train_test_014\A2_train_set_gen\A2_Raw_data_ic'
+    # Trainset_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A0_914_train_test_014\B_914_trainset\set0'
     # Trainset_norm(Image_path, Label_path,Trainset_root)
 
     # Test_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\918_Trainset_gen\Illumi_select_v1_130\brainslice_select'
@@ -612,30 +668,45 @@ if __name__ == '__main__':
 
 
 
-    # Label_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Bbox_GT_filter'
-    # offset = 1
+    # Label_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A0_914_train_test_014\A2_train_set_gen\B0_Bbox_GT'
+    # offset = 2
     # Bbox_exp(Label_root, offset)
+    # 014 path
+    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A0_914_train_test_014\A2_train_set_gen\A0_Raw_data'
+    # Label_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A0_914_train_test_014\A2_train_set_gen\B0_Bbox_GT_offset_2'
+    # thres_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A0_914_train_test_014\A2_train_set_gen\C_thres'
+    # # threshold = 50
+    # # #040 path
+    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\A2_Raw_data_ic'
+    # Label_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\B0_Bbox_GT_offset_2'
+    # thres_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\C_thres'
+    # threshold = 10000
+    # Bouding_box_statics(Image_root, Label_root, thres_save_root, threshold)
+    # Radius_statics(Label_root)
 
-    # Display_im_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Raw_data'
-    # Label_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\BBOX_HAND'
-    # Display_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Display_BBOX_HAND_2'
-    # draw_bbox_from_label(Label_root, Display_im_root, Display_save_root)
 
-    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Raw_data'
-    # Label_root  = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Bbox_GT'
-    # threshold = 60
-    # Bouding_box_statics(Image_root,Label_root, threshold)
 
-    # Label_root  = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Bbox_GT_filter'
-    # Radius_statics(Label_root) #RPN SIZE:(8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30)
-    #
-    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Raw_data'
-    # Save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\914_train_test_014\train_set_gen\Bbox_GT_filter'
-    # size_thre = [2,20,2,20] # xy_low,xy_high,z_low,z_high
-    # signal_thre = 50
-    # Label_select(Label_root,Image_root, Save_root, size_thre, signal_thre)
+    # Label_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\B0_Bbox_GT'
+    # # Radius_statics(Label_root) #RPN SIZE:(8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30)
+    # #
+    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\A2_Raw_data_ic'
+    # Save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\B2_Bbox_GT_filter'
+    # # size_thre = [2,20,2,22] # xy_low,xy_high,z_low,z_high
+    # # signal_thre = 25
+    # # Label_select(Label_root,Image_root, Save_root, size_thre, signal_thre)
     # Radius_statics(Save_root)
 
+    # Display_im_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\A2_Raw_data_ic'
+    # Label_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\B2_Bbox_GT_filter'
+    # Display_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\B3_Display_Bbox_GT_filter'
+    # draw_bbox_from_label(Label_root, Display_im_root, Display_save_root)
+    """
+    # size_thre = [2,20,2,50] # xy_low,xy_high,z_low,z_high
+    # signal_thre = 40
+    # 014
+    # size_thre = [2,20,2,20] # xy_low,xy_high,z_low,z_high
+    # signal_thre = 50
+    """
 
     # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_GT\910_train_test_014\train_set_gen\Raw_data'
     # pkl_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\AD_BrainImage_prm\912_014\model_step2999\pkl'
@@ -650,14 +721,14 @@ if __name__ == '__main__':
     # Display_save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\915_down\915_filter\915_014_filter\model_step2999_bbox'
     # draw_bbox_from_PRM(Label_root, Image_root,Display_save_root)
 
-    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\Split_Reshape_BrainImage_stack_916'
-    # save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\IC_Split_Reshape_BrainImage_stack_916'
+    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\A0_Raw_data'
+    # save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\A2_Raw_data_ic'
     # Illumination_correction(Image_root,save_root,issue=False)
 
-    # BarinImage_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\BrainImage_stack_916'
-    # Save_reshape_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\Reshape_BrainImage_stack_916'
-    # scale = 128 / 75
-    # # scale = 75/128
+    # BarinImage_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\imaris\zoom2'
+    # Save_reshape_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\imaris\zoomsv'
+    # # scale = 128 / 75
+    # scale = 75/128
     # BrainImage_reshape(BarinImage_path,Save_reshape_path,scale)
 
     # Illu_path = r'D:\UserData\zhiyi\Project\AD-Pre-python\Reoganize\illumination.txt'
@@ -666,8 +737,19 @@ if __name__ == '__main__':
     # thres = 130
     # Illumination_select(Illu_path,Image_root, Save_root,thres)
 
-    Index_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\918_Trainset_gen\918_Testset_whole\index.txt'
-    Binary_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\919_test'
-    Save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\919_test_montage'
-    Montage(Index_path,Binary_root,Save_root)
-    pass
+    # Index_path = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\918_Trainset_gen\918_Testset_whole\index.txt'
+    # Binary_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\919_test\model_step2999'
+    # Save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\919_test_montage'
+    # Montage(Index_path,Binary_root,Save_root)
+    # pass
+
+    # Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\imaris\raw'
+    # Save_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_download\imaris\crop'
+    # crop_BrainImage(Image_root,Save_root)
+
+    Image_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\S_select'
+    Label_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\B2_Bbox_GT_filter'
+    Save_label_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\S_select_bbox'
+    select_bbox_image(Image_root,Label_root,Save_label_root)
+    Save_display_root = r'D:\UserData\zhiyi\Data\AD_Data\3M_ABeta\A2_BrainImage\D_BrainImage_Trainset_gen\A1_920_train_test_040\B0_Train_set_gen\S_Display_select_bbox'
+    draw_bbox_from_label(Save_label_root, Image_root , Save_display_root)
